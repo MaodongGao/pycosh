@@ -5,7 +5,7 @@ class CoshConfig(object):
     def __init__(self, delay_freq=214.06e3,
                  bw_segment=None, sample_rate=250e6,
                  offset_start_ratio: int = 20,
-                 range_start: int = int(10e6), range_stop: int = int(110e6)):
+                 range_start: int = None, range_stop: int = None):
         if bw_segment is None:
             bw_segment = [5e2, 20e2, 5e3, 20e3, 50e3, 200e3, 1000e3]
         self.delay_freq = delay_freq
@@ -14,8 +14,8 @@ class CoshConfig(object):
 
         self.offset_start_ratio = offset_start_ratio  # freq_start = offset_start_ratio*bw_segment[0]
 
-        self.range_start = range_start
-        self.range_stop = range_stop
+        self.range_start = int(range_start)
+        self.range_stop = int(range_stop)
 
     @property
     def time_unit(self):

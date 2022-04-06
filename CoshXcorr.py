@@ -9,11 +9,9 @@ class CoshXcorr(object):
     def __init__(self, trace1=None, trace2=None, config: CoshConfig = CoshConfig()):
         self.config = config
         if trace1 is None:
-            trace1 = np.sin(2*np.pi*self.config.delay_freq*np.linspace(0, 1, int(1e8)))
-            trace1 = trace1 + np.random.normal(loc=0, scale=0.01, size=trace1.shape)
+            trace1 = [0, 0, 0]
         if trace2 is None:
-            trace2 = np.sin(2 * np.pi * self.config.delay_freq * np.linspace(0.1, 1.1, int(1e8)))
-            trace2 = trace2 + np.random.normal(loc=0, scale=0.01, size=trace1.shape)
+            trace2 = trace1
         self.trace1 = trace1
         self.trace2 = trace2
 
@@ -43,19 +41,22 @@ class CoshXcorr(object):
             freq_filter = np.append(freq_filter, x)
         return freq_filter
 
-    def process(self, hilbert=scipy.signal.hilbert, fft=np.fft.fft):
-        self.config.print_config()
+    def process(self, hilbert=scipy.signal.hilbert, fft=np.fft.fft, print_progress=True):
+        if print_progress:
+            self.config.print_config()
         t_process_start = time.time()
         trace1 = np.array(self.trace1[self.config.range_start:self.config.range_stop])
         trace2 = np.array(self.trace2[self.config.range_start:self.config.range_stop])
 
         t_start = time.time()
-        print("Calculating phase change using Hilbert Transformation...")
+        if print_progress:
+            print("Calculating phase change using Hilbert Transformation...")
         phasechange1 = np.mod(np.diff(np.angle(hilbert(trace1 - np.mean(trace1)))), 2 * np.pi)
         phasechange2 = np.mod(np.diff(np.angle(hilbert(trace2 - np.mean(trace2)))), 2 * np.pi)
         self.phasechange1 = phasechange1
         self.phasechange2 = phasechange2
-        print(f"Hilbert Transformation finished in {time.time()-t_start:.3f} second(s).")
+        if print_progress:
+            print(f"Hilbert Transformation finished in {time.time() - t_start:.3f} second(s).")
 
         psd11 = np.array([])
         psd11_err = np.array([])
@@ -64,14 +65,16 @@ class CoshXcorr(object):
         psd12 = np.array([])
         psd12_err = np.array([])
         for ii, bw in enumerate(self.config.bw_segment[:-1]):
-            message = f"Calculating frequency range {self.config.bw_segment[ii]*self.config.offset_start_ratio} Hz " \
-                      f"to {self.config.bw_segment[ii+1]*self.config.offset_start_ratio} Hz " \
-                      f"with bandwidth {self.config.bw_segment[ii]} Hz..."
-            print(message)
-            t_start = time.time()
             segment_length = int(np.round(1 / (bw * self.config.time_unit)))
             segment_count = int(np.floor(phasechange1.__len__() / segment_length))
+            if print_progress:
+                message = f"Calculating frequency range {self.config.bw_segment[ii] * self.config.offset_start_ratio} Hz " \
+                          f"to {self.config.bw_segment[ii + 1] * self.config.offset_start_ratio} Hz " \
+                          f"with bandwidth {self.config.bw_segment[ii]} Hz. " \
+                          f"segment_length={segment_length}, segment_count={segment_count}..."
+                print(message)
 
+            t_start = time.time()
             offset_pos = self.config.offset_pos_list[ii]
             # offset_freq = self.config.offset_freq_list[ii] (Not necessary here)
 
@@ -93,8 +96,8 @@ class CoshXcorr(object):
             psd22_err = np.append(psd22_err, np.std(cor22, axis=0) / np.sqrt(segment_count))
             psd12 = np.append(psd12, np.mean(cor12, axis=0))
             psd12_err = np.append(psd12_err, np.std(cor12, axis=0) / np.sqrt(segment_count))
-
-            print(f"Segment process finished in {time.time() - t_start:.3f} second(s).")
+            if print_progress:
+                print(f"Segment process finished in {time.time() - t_start:.3f} second(s).")
 
         self.psd11 = psd11
         self.psd11_err = psd11_err
@@ -104,13 +107,13 @@ class CoshXcorr(object):
         self.psd12_err = psd12_err
         print(f"All data processing finished in {time.time() - t_process_start:.3f} second(s).")
 
-    def process_gpu(self):
+    def process_gpu(self, print_progress=True):
         print("Trying to process using CUDA GPU...")
         import torch
         if not torch.cuda.is_available():
             print("CUDA is not available. Should use normal process instead.")
-            return 
-        self.process(hilbert=self.__hilbert_gpu, fft=self.__fft_gpu)
+            return
+        self.process(hilbert=self.__hilbert_gpu, fft=self.__fft_gpu, print_progress=print_progress)
 
     def plot_SSB_freq_noise(self, freq_lim=None):
         if freq_lim is None:
@@ -119,11 +122,11 @@ class CoshXcorr(object):
         plt_index = np.logical_and(self.freq_list > np.min(freq_lim), self.freq_list < np.max(freq_lim))
         plt_freq = self.freq_list[plt_index]
         fn = np.abs(self.psd12 / self.freq_filter)[plt_index]
-        fn_err = np.abs( self.psd12_err / self.freq_filter )[plt_index]
+        fn_err = np.abs(self.psd12_err / self.freq_filter)[plt_index]
         plt.figure(figsize=(12, 6))
         plt.errorbar(plt_freq, fn, yerr=fn_err)
         plt.loglog()
-        plt.fill_between(plt_freq, fn-fn_err, fn+fn_err, alpha=0.3)
+        plt.fill_between(plt_freq, fn - fn_err, fn + fn_err, alpha=0.3)
         plt.xlabel('Frequency offset (Hz)')
         plt.ylabel('SSB frequency noise (Hz^2/Hz)')
 
@@ -135,12 +138,12 @@ class CoshXcorr(object):
         plt_freq = self.freq_list[plt_index]
         fn = self.psd12 / self.freq_filter
         fn_err = self.psd12_err / self.freq_filter
-        fpn = np.abs( fn / np.power(self.freq_list, 2) )[plt_index]
-        fpn_err = np.abs( fn_err / np.power(self.freq_list, 2) )[plt_index]
+        fpn = np.abs(fn / np.power(self.freq_list, 2))[plt_index]
+        fpn_err = np.abs(fn_err / np.power(self.freq_list, 2))[plt_index]
         plt.figure(figsize=(12, 6))
         plt.errorbar(plt_freq, fpn, yerr=fpn_err)
         plt.loglog()
-        plt.fill_between(plt_freq, fpn-fpn_err, fpn+fpn_err, alpha=0.3)
+        plt.fill_between(plt_freq, fpn - fpn_err, fpn + fpn_err, alpha=0.3)
         plt.xlabel('Frequency offset (Hz)')
         plt.ylabel('SSB phase noise (rad^2/Hz)')
 
